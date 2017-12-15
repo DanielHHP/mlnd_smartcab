@@ -4,11 +4,25 @@ from environment import Agent, Environment
 from planner import RoutePlanner
 from simulator import Simulator
 
+def exploration_factor_0(decay_alpha, trial):
+    return 1 - 0.05 * trial
+
+def exploration_factor_1(decay_alpha, trial):
+    return decay_alpha ** trial
+
+def exploration_factor_2(decay_alpha, trial):
+    return 1. / trial ** 2
+
+def exploration_factor_3(decay_alpha, trial):
+    return math.e ** -(decay_alpha * trial)
+
+exploration_factor_funcs = (exploration_factor_0, exploration_factor_1, exploration_factor_2, exploration_factor_3)
+
 class LearningAgent(Agent):
     """ An agent that learns to drive in the Smartcab world.
         This is the object you will be modifying. """ 
 
-    def __init__(self, env, learning=False, epsilon=1.0, alpha=0.5):
+    def __init__(self, env, learning=False, epsilon=1.0, alpha=0.5, epsilon_decay_alpha=0.5, explore_factor_func=0):
         super(LearningAgent, self).__init__(env)     # Set the agent in the evironment 
         self.planner = RoutePlanner(self.env, self)  # Create a route planner
         self.valid_actions = self.env.valid_actions  # The set of valid actions
@@ -23,7 +37,9 @@ class LearningAgent(Agent):
         ## TO DO ##
         ###########
         # Set any additional class parameters as needed
-
+        self.trial = 0   # trial count
+        self.epsilon_decay_alpha = epsilon_decay_alpha # alpha used in epsilon decay function, range (0, 1)
+        self.explore_factor_func = explore_factor_func #  epsilon decay function type index, see exploration_factor_funcs varable
 
     def reset(self, destination=None, testing=False):
         """ The reset function is called at the beginning of each trial.
@@ -39,6 +55,13 @@ class LearningAgent(Agent):
         # Update epsilon using a decay function of your choice
         # Update additional class parameters as needed
         # If 'testing' is True, set epsilon and alpha to 0
+        self.trial += 1
+
+        if testing:
+            self.epsilon = 0
+            self.alpha = 0
+        else:
+            self.epsilon = exploration_factor_funcs[self.explore_factor_func](self.epsilon_decay_alpha, self.trial)
 
         return None
 
@@ -56,7 +79,7 @@ class LearningAgent(Agent):
         ## TO DO ##
         ###########
         # Set 'state' as a tuple of relevant data for the agent        
-        state = None
+        state = (waypoint, inputs['light'], inputs['oncoming'], inputs['left'], inputs['right'])
 
         return state
 
@@ -71,8 +94,11 @@ class LearningAgent(Agent):
         # Calculate the maximum Q-value of all actions for a given state
 
         maxQ = None
+        for action, q in self.Q[state].iteritems():
+            if maxQ < q:
+                maxQ = q
 
-        return maxQ 
+        return maxQ
 
 
     def createQ(self, state):
@@ -85,6 +111,8 @@ class LearningAgent(Agent):
         # If it is not, create a new dictionary for that state
         #   Then, for each action available, set the initial Q-value to 0.0
 
+        if state not in self.Q:
+            self.Q[state] = dict([(a, 0.0) for a in self.valid_actions])
         return
 
 
@@ -103,7 +131,17 @@ class LearningAgent(Agent):
         # When not learning, choose a random action
         # When learning, choose a random action with 'epsilon' probability
         #   Otherwise, choose an action with the highest Q-value for the current state
- 
+
+        if not self.learning:
+            action = random.choice(Environment.valid_actions)
+        else:
+            if random.uniform(0.0, 1.0) < self.epsilon:
+                action = random.choice(Environment.valid_actions)
+            else:
+                maxQ = self.get_maxQ(state)
+                actions = [a for a, q in self.Q[state].iteritems() if q == maxQ]
+                action = random.choice(actions)
+
         return action
 
 
@@ -117,6 +155,8 @@ class LearningAgent(Agent):
         ###########
         # When learning, implement the value iteration update rule
         #   Use only the learning rate 'alpha' (do not use the discount factor 'gamma')
+
+        self.Q[state][action] = (1 - self.alpha) * self.Q[state][action] + self.alpha * reward
 
         return
 
@@ -145,7 +185,7 @@ def run():
     #   verbose     - set to True to display additional output from the simulation
     #   num_dummies - discrete number of dummy agents in the environment, default is 100
     #   grid_size   - discrete number of intersections (columns, rows), default is (8, 6)
-    env = Environment()
+    env = Environment(verbose=False)
     
     ##############
     # Create the driving agent
@@ -153,13 +193,17 @@ def run():
     #   learning   - set to True to force the driving agent to use Q-learning
     #    * epsilon - continuous value for the exploration factor, default is 1
     #    * alpha   - continuous value for the learning rate, default is 0.5
-    agent = env.create_agent(LearningAgent)
+    agent = env.create_agent(LearningAgent, alpha=.5,
+                             learning=True,
+                             epsilon_decay_alpha=.01,
+                             explore_factor_func=3
+                            )
     
     ##############
     # Follow the driving agent
     # Flags:
     #   enforce_deadline - set to True to enforce a deadline metric
-    env.set_primary_agent(agent)
+    env.set_primary_agent(agent, enforce_deadline=True)
 
     ##############
     # Create the simulation
@@ -168,14 +212,14 @@ def run():
     #   display      - set to False to disable the GUI if PyGame is enabled
     #   log_metrics  - set to True to log trial and simulation results to /logs
     #   optimized    - set to True to change the default log file name
-    sim = Simulator(env)
+    sim = Simulator(env, display=True, update_delay=0.001, log_metrics=True, optimized=True)
     
     ##############
     # Run the simulator
     # Flags:
     #   tolerance  - epsilon tolerance before beginning testing, default is 0.05 
     #   n_test     - discrete number of testing trials to perform, default is 0
-    sim.run()
+    sim.run(tolerance=.001, n_test=20)
 
 
 if __name__ == '__main__':
